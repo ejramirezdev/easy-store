@@ -28,11 +28,45 @@ export const authOptions: AuthOptions = {
       }
       return token;
     },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-        session.user.role = (token.role as "CUSTOMER" | "ADMIN") ?? "CUSTOMER";
+    async session({ session, token, user }) {
+      if (!session.user) {
+        return session;
       }
+
+      let userId = token?.id as string | undefined;
+      let userRole = token?.role as ("CUSTOMER" | "ADMIN") | undefined;
+
+      if (!token) {
+        if (user) {
+          const userRoleFromUser = (user as any).role as
+            | "CUSTOMER"
+            | "ADMIN"
+            | undefined;
+
+          userId = userId ?? (user.id as string | undefined);
+          userRole = userRole ?? userRoleFromUser;
+        }
+
+        if ((!userId || !userRole) && session.user.email) {
+          const dbUser = await prisma.user.findUnique({
+            where: { email: session.user.email },
+            select: { id: true, role: true },
+          });
+
+          if (dbUser) {
+            userId = userId ?? dbUser.id;
+            userRole = userRole ?? dbUser.role;
+          }
+        }
+      }
+
+      if (userId) {
+        session.user.id = userId;
+      }
+      if (userRole) {
+        session.user.role = userRole;
+      }
+
       return session;
     },
   },
