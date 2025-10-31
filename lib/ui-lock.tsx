@@ -1,56 +1,95 @@
+// lib/ui-lock.ts
 "use client";
-import { createContext, useContext, useMemo, useState } from "react";
-import Backdrop from "@mui/material/Backdrop";
-import CircularProgress from "@mui/material/CircularProgress";
 
-type Ctx = {
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+type LockId = number | string;
+
+type UiLockCtx = {
+  // abre un lock, opcionalmente con etiqueta legible
+  lock: (label?: string) => LockId;
+  // cierra un lock por id (acepta number o string)
+  unlock: (id: LockId) => void;
+  // cierra todos los locks activos
+  unlockAll: () => void;
+  // función para consultar si hay lock activo
+  isLocked: () => boolean;
+  // boolean “derivado” para usar directo en JSX
   locked: boolean;
-  lock: (reason?: string) => number; // devuelve id de lock
-  unlock: (id: number) => void; // libera lock concreto
-  clear: () => void; // libera todos (por seguridad)
 };
 
-const UiLockCtx = createContext<Ctx>({
-  locked: false,
-  lock: () => 0,
-  unlock: () => {},
-  clear: () => {},
-});
+const Ctx = createContext<UiLockCtx | null>(null);
 
 export function UiLockProvider({ children }: { children: React.ReactNode }) {
-  const [locks, setLocks] = useState<{ id: number; reason?: string }[]>([]);
+  const seq = useRef(0);
+  const locks = useRef<Set<string>>(new Set());
+  // fuerza re-render del provider cuando cambian locks
+  const [version, setVersion] = useState(0);
 
-  const value = useMemo<Ctx>(
+  const norm = (id: LockId) => String(id);
+
+  const applyOverflow = () => {
+    if (typeof document !== "undefined") {
+      document.documentElement.style.overflow =
+        locks.current.size > 0 ? "hidden" : "";
+    }
+  };
+
+  const lock = useCallback((label?: string): LockId => {
+    const id = label ?? ++seq.current;
+    locks.current.add(norm(id));
+    applyOverflow();
+    setVersion((v) => v + 1);
+    return id;
+  }, []);
+
+  const unlock = useCallback((id: LockId) => {
+    locks.current.delete(norm(id));
+    applyOverflow();
+    setVersion((v) => v + 1);
+  }, []);
+
+  const unlockAll = useCallback(() => {
+    locks.current.clear();
+    applyOverflow();
+    setVersion((v) => v + 1);
+  }, []);
+
+  const isLocked = useCallback(() => locks.current.size > 0, []);
+
+  const value = useMemo<UiLockCtx>(
     () => ({
-      locked: locks.length > 0,
-      lock: (reason?: string) => {
-        const id = Date.now() + Math.random();
-        setLocks((l) => [...l, { id, reason }]);
-        return id;
-      },
-      unlock: (id: number) => setLocks((l) => l.filter((x) => x.id !== id)),
-      clear: () => setLocks([]),
+      lock,
+      unlock,
+      unlockAll,
+      isLocked,
+      locked: locks.current.size > 0,
     }),
-    [locks]
+    // cuando version cambia, recalculamos locked
+    [lock, unlock, unlockAll, isLocked, version]
   );
 
-  return (
-    <UiLockCtx.Provider value={value}>
-      {children}
-      <Backdrop
-        open={locks.length > 0}
-        sx={{
-          zIndex: (t) => t.zIndex.modal + 20,
-          backdropFilter: "blur(2px)",
-          bgcolor: "rgba(0,0,0,.35)",
-        }}
-      >
-        <CircularProgress />
-      </Backdrop>
-    </UiLockCtx.Provider>
-  );
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useUiLock() {
-  return useContext(UiLockCtx);
+  const ctx = useContext(Ctx);
+  if (!ctx) {
+    // fallback súper seguro si el Provider no está montado
+    return {
+      lock: () => 0 as LockId,
+      unlock: () => {},
+      unlockAll: () => {},
+      isLocked: () => false,
+      locked: false,
+    } as UiLockCtx;
+  }
+  return ctx;
 }

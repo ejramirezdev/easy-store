@@ -4,6 +4,7 @@ import { theme } from "@/theme";
 import Header from "@/components/Header";
 import Providers from "./providers";
 import { UiLockProvider } from "@/lib/ui-lock";
+import UiLockOverlay from "@/components/common/UiLockOverlay";
 
 export const metadata: Metadata = {
   title: "Easy Store",
@@ -21,6 +22,7 @@ export default function RootLayout({
         <ThemeProvider theme={theme}>
           <CssBaseline />
           <UiLockProvider>
+            <UiLockOverlay />
             <Providers>
               <Header />
               {children}

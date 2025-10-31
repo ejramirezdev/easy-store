@@ -28,7 +28,7 @@ export default function ProductCard({ product }: { product: UiProduct }) {
       }}
     >
       {/* Zona clickeable protegida por el guard */}
-      <ProductLinkCard href={href}>
+      <ProductLinkCard href={`/products/${product.slug}`}>
         {product.imageUrl && (
           <CardMedia
             component="img"
@@ -40,7 +40,7 @@ export default function ProductCard({ product }: { product: UiProduct }) {
       </ProductLinkCard>
 
       <CardContent sx={{ flex: 1, pb: 1.5 }}>
-        <ProductLinkCard href={href}>
+        <ProductLinkCard href={`/products/${product.slug}`}>
           <Typography
             variant="subtitle1"
             fontWeight={700}
