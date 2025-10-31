@@ -119,6 +119,18 @@ async function main() {
         sortOrder: idx,
       })),
     });
+
+    await prisma.coupon.upsert({
+      where: { code: "EASY10" },
+      update: {},
+      create: {
+        code: "EASY10",
+        type: "PERCENT",
+        value: "10.00",
+        isActive: true,
+        maxUses: 100,
+      },
+    });
   }
 
   console.log("✅ Seed listo");

@@ -7,7 +7,6 @@ import {
   CircularProgress,
   Container,
   Divider,
-  Paper,
   Stack,
   TextField,
   Typography,
@@ -18,16 +17,30 @@ import { useCart } from "@/lib/useCart";
 
 export default function CartPage() {
   const {
+    cart, // 👈 acceso al objeto completo
     items,
     count,
     subtotal,
+    // 👇 nuevos campos que ahora devuelve el backend
+    // (si tu hook no los expone aún, puedes leerlos de `cart?.discount` etc.)
+    // discount,
+    // shipping,
+    // total,
     isLoading,
     inc,
     dec,
     remove,
     isPending,
-    refresh, // para refrescar después de aplicar/remover cupón
+    refresh, // refresca después de aplicar/quitar cupón
   } = useCart();
+
+  // Totales desde el payload (con fallback por si no vinieran aún)
+  const discount = cart?.discount ?? 0;
+  const shipping = cart?.shipping ?? 0;
+  const total = cart?.total ?? subtotal;
+
+  // Cupón aplicado
+  const appliedCoupon = cart?.coupon; // { code, type, value } | null
 
   // Estado local para cupones
   const [code, setCode] = useState("");
@@ -52,7 +65,7 @@ export default function CartPage() {
         }
         setMsg(`Cupón ${data.coupon.code} aplicado`);
         setCode("");
-        refresh(); // refresca totales del carrito si los devuelves desde el backend
+        refresh(); // ← vuelve a pedir /api/cart con descuento/total
       } catch {
         setErr("Error al aplicar el cupón");
       }
@@ -104,13 +117,7 @@ export default function CartPage() {
           }}
         >
           {/* Lista de ítems */}
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 1.5,
-            }}
-          >
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
             {items.map((it) => {
               const loadInc = isPending(it.productId, "inc");
               const loadDec = isPending(it.productId, "dec");
@@ -249,20 +256,27 @@ export default function CartPage() {
             >
               <TextField
                 size="small"
-                label="Código de cupón"
+                label={
+                  appliedCoupon
+                    ? `Cupón aplicado: ${appliedCoupon.code}`
+                    : "Código de cupón"
+                }
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                disabled={pendingCoupon}
+                disabled={pendingCoupon || !!appliedCoupon}
                 sx={{ flex: 1 }}
               />
               <Button
                 variant="contained"
                 onClick={apply}
-                disabled={!code || pendingCoupon}
+                disabled={!code || pendingCoupon || !!appliedCoupon}
               >
                 {pendingCoupon ? <CircularProgress size={18} /> : "Aplicar"}
               </Button>
-              <Button onClick={cancel} disabled={pendingCoupon}>
+              <Button
+                onClick={cancel}
+                disabled={pendingCoupon || !appliedCoupon}
+              >
                 {pendingCoupon ? (
                   <CircularProgress size={18} />
                 ) : (
@@ -271,6 +285,17 @@ export default function CartPage() {
               </Button>
             </Stack>
 
+            {/* Mensajes */}
+            {appliedCoupon && (
+              <Alert severity="info" sx={{ mb: 1 }}>
+                Cupón <strong>{appliedCoupon.code}</strong> activo
+                {appliedCoupon.type === "PERCENT" &&
+                  ` (-${appliedCoupon.value}% )`}
+                {appliedCoupon.type === "FIXED" &&
+                  ` (-$${Number(appliedCoupon.value).toFixed(2)})`}
+                {appliedCoupon.type === "FREESHIP" && " (Envío gratis)"}
+              </Alert>
+            )}
             {msg && (
               <Alert severity="success" sx={{ mb: 1 }}>
                 {msg}
@@ -282,15 +307,15 @@ export default function CartPage() {
               </Alert>
             )}
 
-            {/* Totales (por ahora: solo subtotal; cuando el backend exponga discount/total, agrégalo aquí) */}
+            {/* Totales */}
             <Stack spacing={0.5} sx={{ mt: 1 }}>
               <Row label="Artículos" value={count} isInt />
               <Row label="Subtotal" value={Number(subtotal)} />
-              {/* Ejemplo a futuro:
-                  <Row label="Descuento" value={discount} />
-                  <Row label="Envío" value={shipping} />
-                  <Row label="Total" value={total} strong />
-               */}
+              {discount > 0 && (
+                <Row label="Descuento" value={-Number(discount)} />
+              )}
+              <Row label="Envío" value={Number(shipping)} />
+              <Row label="Total" value={Number(total)} strong />
             </Stack>
 
             <Button

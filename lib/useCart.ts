@@ -21,10 +21,10 @@ type CartResponse = {
   items: CartItem[];
   count: number;
   subtotal: number;
-  // opcionales si luego añades cupones / envío / total:
-  // discount?: number;
-  // shipping?: number;
-  // total?: number;
+  discount: number;
+  shipping: number;
+  total: number;
+  coupon: { code: string; type: string; value: number } | null;
 };
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());

@@ -7,46 +7,94 @@ import { calcTotals } from "@/lib/totals";
 
 export async function POST(req: Request) {
   const { code } = await req.json();
-  if (!code)
-    return NextResponse.json({ error: "Código requerido" }, { status: 400 });
-
   const session = await getServerSession(authOptions);
-  const userId = session?.user?.id;
 
-  const coupon = await prisma.coupon.findFirst({
-    where: {
-      code: { equals: code.trim(), mode: "insensitive" },
-      isActive: true,
-      OR: [{ startsAt: null }, { startsAt: { lte: new Date() } }],
-      AND: [{ endsAt: null }, { endsAt: { gte: new Date() } }],
-    },
-  });
-  if (!coupon)
+  if (!code || typeof code !== "string") {
+    return NextResponse.json({ error: "Código inválido" }, { status: 400 });
+  }
+  const norm = code.trim().toUpperCase();
+
+  // Carrito (logueado o anónimo vía cookie)
+  const { cart, setCookieId } = await getOrCreateCart(session?.user?.id);
+
+  // Buscar cupón
+  const coupon = await prisma.coupon.findUnique({ where: { code: norm } });
+  if (!coupon || !coupon.isActive) {
+    return NextResponse.json({ error: "Cupón inválido" }, { status: 400 });
+  }
+
+  // Validaciones generales
+  const now = new Date();
+  if (coupon.startsAt && coupon.startsAt > now) {
     return NextResponse.json(
-      { error: "Cupón inválido o inactivo" },
-      { status: 404 }
+      { error: "Cupón aún no está vigente" },
+      { status: 400 }
     );
+  }
+  if (coupon.endsAt && coupon.endsAt < now) {
+    return NextResponse.json({ error: "Cupón expirado" }, { status: 400 });
+  }
 
-  const { cart, setCookieId } = await getOrCreateCart(userId);
+  // Límite global de usos (opcional)
+  if (coupon.maxUses != null) {
+    const totalUses = await prisma.couponRedemption.count({
+      where: { couponId: coupon.id },
+    });
+    if (totalUses >= coupon.maxUses) {
+      return NextResponse.json({ error: "Cupón agotado" }, { status: 400 });
+    }
+  }
 
-  // Trae items y calcula totales simulando el cupón
-  const items = await prisma.cartItem.findMany({
-    where: { cartId: cart.id },
-    include: { product: { select: { price: true } } },
+  // Límite por usuario (si hay sesión)
+  if (coupon.perUserLimit != null && session?.user?.id) {
+    const perUserUses = await prisma.couponRedemption.count({
+      where: { couponId: coupon.id, userId: session.user.id },
+    });
+    if (perUserUses >= coupon.perUserLimit) {
+      return NextResponse.json(
+        { error: "Límite de uso por usuario alcanzado" },
+        { status: 400 }
+      );
+    }
+  }
+
+  // Traer carrito completo para calcular totales y validar minSubtotal
+  const fullCart = await prisma.cart.findUnique({
+    where: { id: cart.id },
+    include: { items: { include: { product: true } } },
   });
-  const lines = items.map((it) => ({
+
+  const lines = (fullCart?.items ?? []).map((it) => ({
     price: Number(it.product.price),
     quantity: it.quantity,
   }));
-  const totals = calcTotals(lines, coupon);
 
-  // (Opcional) persistir el cupón en el carrito (ej: cart.couponCode)
-  await prisma.cart.update({
-    where: { id: cart.id },
+  // Validación de mínimo (tu calcTotals también lo contempla; aquí anticipamos el error)
+  if (
+    coupon.minSubtotal &&
+    lines.reduce((a, l) => a + l.price * l.quantity, 0) <
+      Number(coupon.minSubtotal)
+  ) {
+    return NextResponse.json(
+      { error: "No alcanzas el mínimo para este cupón" },
+      { status: 400 }
+    );
+  }
+
+  // Idempotencia: elimina cualquier cupón aplicado previamente en este cart
+  await prisma.couponRedemption.deleteMany({ where: { cartId: cart.id } });
+
+  // Marca "aplicado" para este cart (auditoría)
+  await prisma.couponRedemption.create({
     data: {
-      /* couponCode: coupon.code */
+      couponId: coupon.id,
+      userId: session?.user?.id ?? null,
+      cartId: cart.id,
     },
   });
+
+  // Totales finales (usa tu calcTotals, que maneja PERCENT/FIXED/FREESHIP y shipping)
+  const totals = calcTotals(lines, coupon); // { subtotal, discount, shipping, total }
 
   const res = NextResponse.json({
     ok: true,
@@ -55,9 +103,11 @@ export async function POST(req: Request) {
       type: coupon.type,
       value: Number(coupon.value),
     },
-    totals,
+    ...totals,
   });
-  if (setCookieId)
+
+  if (setCookieId) {
     res.cookies.set(setCookieId.name, setCookieId.value, setCookieId.options);
+  }
   return res;
 }

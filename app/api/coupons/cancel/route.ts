@@ -7,30 +7,34 @@ import { calcTotals } from "@/lib/totals";
 
 export async function DELETE() {
   const session = await getServerSession(authOptions);
-  const userId = session?.user?.id;
-  const { cart, setCookieId } = await getOrCreateCart(userId);
+  const { cart, setCookieId } = await getOrCreateCart(session?.user?.id);
 
-  // Limpia cupón aplicado en cart si lo guardas
-  await prisma.cart.update({
-    where: { id: cart.id },
-    data: {
-      /* couponCode: null */
-    },
-  });
-
-  // Recalcula totales sin cupón
-  const items = await prisma.cartItem.findMany({
+  // Quita cualquier cupón aplicado a este cart
+  await prisma.couponRedemption.deleteMany({
     where: { cartId: cart.id },
-    include: { product: { select: { price: true } } },
   });
-  const lines = items.map((it) => ({
+
+  // Devuelve totales sin cupón (y shipping por defecto)
+  const fullCart = await prisma.cart.findUnique({
+    where: { id: cart.id },
+    include: { items: { include: { product: true } } },
+  });
+
+  const lines = (fullCart?.items ?? []).map((it) => ({
     price: Number(it.product.price),
     quantity: it.quantity,
   }));
-  const totals = calcTotals(lines);
 
-  const res = NextResponse.json({ ok: true, totals });
-  if (setCookieId)
+  const totals = calcTotals(lines, undefined);
+
+  const res = NextResponse.json({
+    ok: true,
+    coupon: null,
+    ...totals,
+  });
+
+  if (setCookieId) {
     res.cookies.set(setCookieId.name, setCookieId.value, setCookieId.options);
+  }
   return res;
 }

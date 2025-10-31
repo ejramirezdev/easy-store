@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateCart } from "@/lib/cart";
+import { calcTotals } from "@/lib/totals"; // 👈 usa tu totals actual
 
 // Utilidad: formatea el carrito a un payload plano (Decimal -> number)
 async function buildCartPayload(cartId: string) {
@@ -34,12 +35,37 @@ async function buildCartPayload(cartId: string) {
   }));
 
   const count = items.reduce((a, it) => a + it.quantity, 0);
-  const subtotal = items.reduce(
-    (a, it) => a + it.quantity * Number(it.product.price),
-    0
-  );
 
-  return { id: cartId, items, count, subtotal };
+  // Lines para totals (usa price como number en dólares)
+  const lines = items.map((it) => ({
+    price: Number(it.product.price),
+    quantity: it.quantity,
+  }));
+
+  // ¿Hay cupón aplicado a este cart?
+  const redemption = await prisma.couponRedemption.findFirst({
+    where: { cartId },
+    include: { coupon: true },
+    orderBy: { createdAt: "desc" }, // por si acaso
+  });
+  const coupon = redemption?.coupon ?? undefined;
+
+  // Totales usando tu helper
+  const { subtotal, discount, shipping, total } = calcTotals(lines, coupon);
+
+  // Estructura final
+  return {
+    id: cartId,
+    items,
+    count,
+    subtotal, // number
+    discount, // number
+    shipping, // number
+    total, // number
+    coupon: coupon
+      ? { code: coupon.code, type: coupon.type, value: Number(coupon.value) }
+      : null,
+  };
 }
 
 export async function GET() {
